@@ -2,3 +2,4 @@ poke-env
 matplotlib
 tqdm
 torch
+torchrl
