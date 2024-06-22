@@ -1,0 +1,15 @@
+name: poke_env
+channels:
+  - conda-forge
+dependencies:
+  - pip
+  - python=3.11
+  - pip:
+    - gym
+    - matplotlib
+    - numpy==1.26.4
+    - poke-env
+    - tensorboard
+    - tqdm
+    - torch
+    - torchrl

@@ -1,5 +1,8 @@
-poke-env
+gym
 matplotlib
+numpy==1.26.4
+poke-env
+tensorboard
 tqdm
 torch
 torchrl

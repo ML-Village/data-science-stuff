@@ -11,6 +11,10 @@ This directory extends the poke-env package to other RL frameworks beyond `keras
 2. Install python packages.
 
 ```bash
+# using conda
+conda env create -f environment.yaml
+
+# using venv
 python -m venv venv
 . venv/bin/activate
 pip install --no-cache-dir --upgrade pip
