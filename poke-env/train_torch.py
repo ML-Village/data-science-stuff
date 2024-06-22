@@ -1,9 +1,8 @@
 import torch
-from poke_env.player import RandomPlayer, cross_evaluate
-from tabulate import tabulate
 
 from src.envs.simple_rl import SimpleRLEnv
-from src.players import MaxDamagePlayer, TrainedTorchRLPlayer
+from src.evaluate import evaluate_trained_model
+from src.players import MaxDamagePlayer
 from src.trainers.torch import Transition, ReplayMemory, DQN, TorchTrainer
 
 
@@ -42,24 +41,9 @@ async def main():
 
     # start training model
     trainer.train_model()
-
-    # Create three random players
-    players = [
-        RandomPlayer(battle_format=battle_format),
-        MaxDamagePlayer(battle_format=battle_format),
-        TrainedTorchRLPlayer(battle_format=battle_format, env=env, model=trainer.policy_net, device=device),
-    ]
-
-    # Cross evaluate players: each player plays 20 games against every other player
-    cross_evaluation = await cross_evaluate(players, n_challenges=20)
-
-    # Prepare results for display
-    table = [["-"] + [p.username for p in players]]
-    for p_1, results in cross_evaluation.items():
-        table.append([p_1] + [cross_evaluation[p_1][p_2] for p_2 in results])
-
-    # Display results
-    print(tabulate(table))
+    
+    # evaluate model
+    await evaluate_trained_model(env, trainer.policy_net)
 
     env.close()
 

@@ -24,7 +24,8 @@ pip install --no-cache-dir -r requirements.txt
 3. Start training
 
 ```bash
-python train.py
+python train_torch.py    # train using torch package
+python train_torchrl.py  # train using torchrl package
 ```
 
 ## Project Directory
