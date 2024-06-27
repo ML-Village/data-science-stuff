@@ -1,0 +1,28 @@
+version: '3'
+services:
+  # ezkl:
+  #   build:
+  #     dockerfile: ./ezkl/Dockerfile
+  ps-client:
+    build:
+      dockerfile: ./dockerfiles/pokemon-showdown.Dockerfile
+    image: pokemon-showdown:latest
+    container_name: ps-client
+    ports:
+      - "8000:8000"
+    #volumes:
+      #- ./poke-env:/poke-env
+    command: ["node", "pokemon-showdown", "start", "--no-security"]
+
+  ps-trainer:
+    build:
+      dockerfile: ./dockerfiles/rltrainer.Dockerfile
+    image: rltrainer:latest
+    container_name: ps-trainer
+    volumes:
+      - ./poke-env:/app
+    command: ["bash"]
+    stdin_open: true # docker run -i
+    tty: true        # docker run -t
+
+  
