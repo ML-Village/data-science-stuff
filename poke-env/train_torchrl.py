@@ -100,8 +100,9 @@ class TorchRlEnv(EnvBase):
         out = TensorDict({
             'state': observation,
             'reward': reward,
-            'done': terminated,
-            # 'truncated': truncated,
+            'terminated': terminated,
+            'truncated': truncated,
+            'done': terminated or truncated,
         }, batch_size=tensordict.shape, device=self.device)
         return out
 
