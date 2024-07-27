@@ -5,6 +5,7 @@ import torch
 from tensordict import TensorDict
 from tensordict.nn import TensorDictSequential
 from torchrl.collectors import SyncDataCollector
+from torchrl.data import TensorDictReplayBuffer, LazyMemmapStorage
 from torchrl.data.tensor_specs import (
     BoundedTensorSpec, 
     CompositeSpec, 
@@ -14,9 +15,14 @@ from torchrl.data.tensor_specs import (
 )
 from torchrl.envs import EnvBase
 from torchrl.modules import EGreedyModule, QValueActor
-from torchrl.objectives import DQNLoss
+from torchrl.objectives import DQNLoss, SoftUpdate
 from torchrl.record.loggers import get_logger
-from torchrl.trainers import Trainer, LogReward
+from torchrl.trainers import (
+    LogReward,
+    Recorder,
+    ReplayBufferTrainer,
+    Trainer,
+)
 
 from src.envs.simple_rl import SimpleRLEnv
 from src.evaluate import evaluate_trained_model
@@ -25,6 +31,8 @@ from src.trainers.torch.model import DQN
 
 
 DEVICE = 'cpu'
+BATCH_SIZE = 256
+STORAGE_MAX_SIZE = 12_800
 
 CONFIG = {
     'collector': {
@@ -177,7 +185,23 @@ async def main():
         # save_trainer_file=trainer_file_path / 'model_file.pt',
         **CONFIG['trainer'],
     )
-    
+
+    # add hooks to store collected data
+    buffer = TensorDictReplayBuffer(
+        batch_size=BATCH_SIZE,
+        storage=LazyMemmapStorage(
+            max_size=STORAGE_MAX_SIZE,
+            scratch_dir=trainer_file_path / 'buffer',
+        ),
+    )
+    buffer_hook = ReplayBufferTrainer(replay_buffer=buffer, flatten_tensordicts=True)
+    buffer_hook.register(trainer)
+
+    # add hooks to update target network
+    target_updater = SoftUpdate(loss_module, eps=0.995)
+    trainer.register_op('post_optim', target_updater.step)
+
+    # add hooks to log rewards
     log_reward = LogReward(log_pbar=True, logname='reward')
     log_reward.register(trainer)
 
