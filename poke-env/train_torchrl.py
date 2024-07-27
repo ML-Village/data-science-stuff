@@ -5,7 +5,13 @@ import torch
 from tensordict import TensorDict
 from tensordict.nn import TensorDictSequential
 from torchrl.collectors import SyncDataCollector
-from torchrl.data.tensor_specs import CompositeSpec, BoundedTensorSpec, UnboundedContinuousTensorSpec, DiscreteTensorSpec
+from torchrl.data.tensor_specs import (
+    BoundedTensorSpec, 
+    CompositeSpec, 
+    DiscreteTensorSpec,
+    OneHotDiscreteTensorSpec,
+    UnboundedContinuousTensorSpec,
+)
 from torchrl.envs import EnvBase
 from torchrl.modules import EGreedyModule, QValueActor
 from torchrl.objectives import DQNLoss
@@ -65,13 +71,20 @@ class TorchRlEnv(EnvBase):
     def __init__(self, poke_env: SimpleRLEnv, device: str = 'cpu'):
         super().__init__(device=device, batch_size=[])
         self.poke_env = poke_env
+        self.action_space = self.poke_env.action_space_size()
+        
         box = self.poke_env.describe_embedding()
         self.observation_spec = CompositeSpec({
-            'state': BoundedTensorSpec(low=box.low, high=box.high, shape=(10,), dtype=torch.float32, device=self.device),
+            'state': BoundedTensorSpec(
+                low=box.low,
+                high=box.high,
+                shape=box.shape,
+                dtype=torch.float32,
+                device=self.device,
+            ),
         })
         self.state_spec = self.observation_spec.clone()
-        # self.action_spec = BoundedTensorSpec(low=-1, high=21, shape=(1,), dtype=torch.int8, device=self.device)
-        self.action_spec = DiscreteTensorSpec(1)
+        self.action_spec = DiscreteTensorSpec(n=self.action_space)
         self.reward_spec = UnboundedContinuousTensorSpec(shape=(1,), device=self.device)
 
     def _reset(self, tensordict: TensorDict):
@@ -119,13 +132,13 @@ async def main():
     # https://pytorch.org/rl/stable/tutorials/coding_dqn.html
     
     # Make the components
-    n_actions = simple_env.action_space.n      # Get number of actions from gym action space
-    state, info = simple_env.reset()           # Get the number of state observations
-    n_observations = len(state)
+    n_observations = simple_env.describe_embedding().shape[0]
+    n_actions = simple_env.action_space.n
+    model = DQN(n_observations, n_actions).to(DEVICE)
     actor = QValueActor(
-        module=DQN(n_observations, n_actions).to(DEVICE),
-        spec=CompositeSpec(action=env.specs["input_spec", "full_action_spec", "action"]),
-        in_keys=["state"],
+        module=model,
+        spec=env.action_spec,
+        in_keys=['state'],
     )
     greedy_module = EGreedyModule(spec=actor.spec, **CONFIG['greedy_module'])
     policy = TensorDictSequential(actor, greedy_module).to(DEVICE)
