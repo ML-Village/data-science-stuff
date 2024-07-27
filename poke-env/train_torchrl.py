@@ -13,7 +13,16 @@ from torchrl.data.tensor_specs import (
     OneHotDiscreteTensorSpec,
     UnboundedContinuousTensorSpec,
 )
-from torchrl.envs import EnvBase
+from torchrl.envs import (
+    Compose,
+    EnvBase,
+    StepCounter,
+    TransformedEnv,
+)
+from torchrl.envs.transforms import (
+    ActionMask,
+    StepCounter,
+)
 from torchrl.modules import EGreedyModule, QValueActor
 from torchrl.objectives import DQNLoss, SoftUpdate
 from torchrl.record.loggers import get_logger
@@ -90,6 +99,7 @@ class TorchRlEnv(EnvBase):
                 dtype=torch.float32,
                 device=self.device,
             ),
+            'action_mask': OneHotDiscreteTensorSpec(n=self.action_space),
         })
         self.state_spec = self.observation_spec.clone()
         self.action_spec = DiscreteTensorSpec(n=self.action_space)
@@ -99,18 +109,32 @@ class TorchRlEnv(EnvBase):
         # print(f'\n_reset = {tensordict}\n')
         state, info = self.poke_env.reset()
         state = TensorDict({'state': state}, batch_size=self.batch_size, device=self.device)
-        # print(f'\n_reset = {state}\n')
+        state['action_mask'] = [
+            self.poke_env.action_available(i, self.poke_env.current_battle)
+            for i in range(self.action_space)
+        ]
         return state
 
     def _step(self, tensordict: TensorDict):
         # print(f'\n_step = {tensordict}\n')
         observation, reward, terminated, truncated, _ = self.poke_env.step(tensordict['action'].item())
+        action_mask = [
+            self.poke_env.action_available(i, self.poke_env.current_battle)
+            for i in range(self.action_space)
+        ]
+
+        # scenario with no valid moves >> randomly set 1 true
+        if sum(action_mask) == 0:
+            print('NO VALID MOVES! RANDOMLY ALLOW ONE')
+            action_mask[0] = True
+        
         out = TensorDict({
             'state': observation,
             'reward': reward,
             'terminated': terminated,
             'truncated': truncated,
             'done': terminated or truncated,
+            'action_mask': action_mask,
         }, batch_size=tensordict.shape, device=self.device)
         return out
 
@@ -132,7 +156,13 @@ async def main():
         start_challenging=True,
     )
 
-    env = TorchRlEnv(poke_env=simple_env)
+    env = TransformedEnv(
+        env=TorchRlEnv(poke_env=simple_env),
+        transform=Compose(
+            ActionMask(),
+            StepCounter(),
+        ),
+    )
 
     # check_env_specs(env)
     # train_env.close()
@@ -148,8 +178,13 @@ async def main():
         module=model,
         spec=env.action_spec,
         in_keys=['state'],
+        action_mask_key='action_mask',
     )
-    greedy_module = EGreedyModule(spec=actor.spec, **CONFIG['greedy_module'])
+    greedy_module = EGreedyModule(
+        spec=actor.spec,
+        action_mask_key='action_mask',
+        **CONFIG['greedy_module'],
+    )
     policy = TensorDictSequential(actor, greedy_module).to(DEVICE)
 
     # Create the collector

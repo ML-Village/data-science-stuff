@@ -1,7 +1,7 @@
 import numpy as np
 from gym.spaces import Space, Box
 from poke_env.player import Gen8EnvSinglePlayer
-from poke_env.environment import AbstractBattle
+from poke_env.environment import Battle
 
 
 class SimpleRLEnv(Gen8EnvSinglePlayer):
@@ -14,7 +14,41 @@ class SimpleRLEnv(Gen8EnvSinglePlayer):
         https://github.com/hsahovic/poke-env/issues/484
     """
 
-    def calc_reward(self, last_battle, current_battle) -> float:
+    def action_available(self, action: int, battle: Battle) -> np.ndarray:
+        if action == -1:
+            return False
+        elif (
+            action < 4
+            and action < len(battle.available_moves)
+            and not battle.force_switch
+        ):
+            return True
+        elif (
+            not battle.force_switch
+            and battle.can_z_move
+            and battle.active_pokemon
+            and 0 <= action - 4 < len(battle.active_pokemon.available_z_moves)
+        ):
+            return True
+        elif (
+            battle.can_mega_evolve
+            and 0 <= action - 8 < len(battle.available_moves)
+            and not battle.force_switch
+        ):
+            return True
+        elif (
+            battle.can_dynamax
+            and 0 <= action - 12 < len(battle.available_moves)
+            and not battle.force_switch
+        ):
+            return True
+        elif 0 <= action - 16 < len(battle.available_switches):
+            return True
+        else:
+            return False
+    
+
+    def calc_reward(self, last_battle: Battle, current_battle: Battle) -> float:
         return self.reward_computing_helper(
             current_battle, fainted_value=2.0, hp_value=1.0, victory_value=30.0
         )
