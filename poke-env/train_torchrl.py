@@ -39,42 +39,22 @@ from src.players import MaxDamagePlayer
 from src.trainers.torch.model import DQN
 
 
-DEVICE = 'cpu'
 BATCH_SIZE = 256
+DEVICE = 'cpu'
+FRAMES_PER_BATCH = 512      # the number of frames delivered at each iteration over the collector
+INIT_RANDOM_FRAMES = 1_024  # number of random steps (steps where env.rand_step() is being called)
+OPTIM_STEPS_PER_BATCH = 5
+POST_EVAL = True
 STORAGE_MAX_SIZE = 12_800
+TOTAL_FRAMES = 512_000
 
-CONFIG = {
-    'collector': {
-        'total_frames': -1,           # if -1, endless collector
-        'max_frames_per_traj': -1,    # once a trajector reaches this no of steps, environment is reset
-        'frames_per_batch': 32,       # the number of frames delivered at each iteration over the collector
-        'init_random_frames': None,   # number of random steps (steps where env.rand_step() is being called)
-        'device': DEVICE,
-        'storing_device': DEVICE,
-    },
-    'loss': {
-        'gamma': 0.99,
-        'hard_update_freq': 10_000,
-    },
-    'optimizer': {
-        'lr': 0.00025,
-    },
-    'greedy_module': {
-        'eps_init': 1.0,
-        'eps_end': 0.01,
-    },
-    'get_logger': {
-        'logger_type': 'tensorboard',
-        'logger_name': 'runs', # log path
-    },
-    'trainer': {
-        'frame_skip': 1,
-        'log_interval': 1,           # how often values should be logged, in frame count.
-        'optim_steps_per_batch': 1,
-        'progress_bar': True,
-        'total_frames': 256,
-    },
-}
+# # for testing
+# BATCH_SIZE = 25
+# FRAMES_PER_BATCH = 25
+# INIT_RANDOM_FRAMES = 0
+# OPTIM_STEPS_PER_BATCH = 10
+# POST_EVAL = False
+# TOTAL_FRAMES = 25
 
 
 class TorchRlEnv(EnvBase):
@@ -138,7 +118,7 @@ class TorchRlEnv(EnvBase):
         }, batch_size=tensordict.shape, device=self.device)
         return out
 
-    def _set_seed(self):
+    def _set_seed(self, seed = None):
         pass
 
 
@@ -181,9 +161,11 @@ async def main():
         action_mask_key='action_mask',
     )
     greedy_module = EGreedyModule(
-        spec=actor.spec,
         action_mask_key='action_mask',
-        **CONFIG['greedy_module'],
+        annealing_num_steps=TOTAL_FRAMES,
+        eps_init=1.0,
+        eps_end=0.01,
+        spec=actor.spec,
     )
     policy = TensorDictSequential(actor, greedy_module).to(DEVICE)
 
@@ -192,33 +174,57 @@ async def main():
     # https://pytorch.org/rl/stable/reference/generated/torchrl.collectors.SyncDataCollector.html
     collector = SyncDataCollector(
         create_env_fn=env,
+        device=DEVICE,
+        frames_per_batch=FRAMES_PER_BATCH,
+        init_random_frames=INIT_RANDOM_FRAMES,
         policy=policy, 
-        **CONFIG['collector'],
+        storing_device=DEVICE,
+        total_frames=-1,         # if -1, endless collector
+        max_frames_per_traj=-1,  # once a trajector reaches this no of steps, environment is reset
     )
 
     # Create the loss module
-    loss_module = DQNLoss(value_network=actor, loss_function="l2", delay_value=True)
-    # loss_module.set_keys(done='end-of-life', terminated='end-of-life')
-    loss_module.make_value_estimator(gamma=CONFIG['loss']['gamma'])
+    loss_module = DQNLoss(
+        value_network=actor,
+        loss_function='l2',
+        delay_value=True,
+        double_dqn=True,
+    )
+    loss_module.make_value_estimator(gamma=0.99)
 
     # Create the optimizer
-    optimizer = torch.optim.Adam(loss_module.parameters(), **CONFIG['optimizer'])
+    optimizer = torch.optim.Adam(
+        params=loss_module.parameters(), 
+        lr=0.0025,
+        weight_decay=0.00001,
+        betas=(0.9, 0.999),
+    )
 
     # Create the logger
     exp_name = '_'.join(['DQN', datetime.now().strftime("%Y%m%d%H%M%S")])
-    logger = get_logger(experiment_name=exp_name, **CONFIG['get_logger'])
-    trainer_file_path = Path(CONFIG['get_logger']['logger_name']) / exp_name
+    logger_name = 'runs'
+    logger = get_logger(
+        experiment_name=exp_name,
+        logger_type='tensorboard',
+        logger_name=logger_name,
+    )
+    trainer_file_path = Path(logger_name) / exp_name
     trainer_file_path.mkdir(exist_ok=True, parents=True)
     
     # https://pytorch.org/rl/stable/tutorials/coding_dqn.html
     trainer = Trainer(
         collector=collector,
-        loss_module=loss_module,
-        optimizer=optimizer,
+        frame_skip=1,
+        log_interval=1,     # how often values should be logged, in frame count.
         logger=logger,
-        # save_trainer_interval=1,
+        loss_module=loss_module,
+        optim_steps_per_batch=OPTIM_STEPS_PER_BATCH,
+        optimizer=optimizer,
+        progress_bar=True,
         # save_trainer_file=trainer_file_path / 'model_file.pt',
-        **CONFIG['trainer'],
+        # save_trainer_interval=1,
+        seed=123,
+        total_frames=TOTAL_FRAMES,
     )
 
     # add hooks to store collected data
@@ -257,9 +263,10 @@ async def main():
 
     # start of evaluation
 
-    model = DQN(n_observations, n_actions)
-    model.load_state_dict(torch.load(trainer_file_path / 'trained_model.pth'))
-    await evaluate_trained_model(env=simple_env, model=model, device=DEVICE)
+    if POST_EVAL:
+        model = DQN(n_observations, n_actions)
+        model.load_state_dict(torch.load(trainer_file_path / 'trained_model.pth'))
+        await evaluate_trained_model(env=simple_env, model=model, device=DEVICE, n_challenges=100)
 
     # end of evaluation
 
